@@ -3,3 +3,5 @@ A simple project to convert standard expression/footswitch pedals into MIDI data
  
 One day I might make a proper board for it, with PCB mounted jacks and USB Power.
 
+I've added 3d models for an enclosure.
+
