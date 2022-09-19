@@ -1,14 +1,19 @@
+// Filter libraries. See https://tttapa.github.io/Arduino-Helpers/Doxygen/d3/dbe/1_8FilteredAnalog_8ino-example.html
+#include <Arduino_Helpers.h>
+#include <AH/Hardware/FilteredAnalog.hpp>
+#include <AH/Timing/MillisMicrosTimer.hpp>
 
 
 // Code tested on Arduino Nano 5V (no USB)
 
 #include <ButtonDebounce.h>
 
+// Create a filtered analog object on pin A0, with the default settings:
+FilteredAnalog<> analog = A0;
+
 const byte footSwitchPin = 2;    // the number of the footswitch input pin
 const byte buttonFootSwitchPin = 3;    // the number of the pushbutton (Footswitch mode) input pin
 const byte buttonExpPedalPin = 4;    // the number of the pushbutton (exp pedal channel) input pin
-
-const byte expPedalPin = 0;    // the ANALOG pin of expression pedal
 
 const byte MIDIChannel = 0; // MIDI Channel the messages will be sent to
 const byte PedalCC = 20; // CC for the Footswitch
@@ -18,9 +23,7 @@ const byte PedalOFFValue = 127; //Value for the CC (OFF)
 const byte ModWheelCC = 1; // MIDI Standard: CC typically assigned to the Mod Wheel
 const byte VolumeCC = 7; // MIDI Standard: CC Typically assigned to volume control
 
-const int MIN_EXP_CHANGE = 8; // 1024/128 = 8 Minimum analog change to be detected
-int deltaEXPChange = 0; // Initialize delta for the expression pedal
-int lastEXPValue = 0; // Initialize last Expression pedal value read
+int lastEXPValue = 0; // Initialize last Expression pedal value read. This is done so we're not constantly sending the same value over MIDI
 
 bool Toggle_CC = true;
 // By default, the arduino would send PedalONValue when pressed , and PedalOFFValue immediately when depressed. 
@@ -42,18 +45,25 @@ void setup() {
   buttonExpPedal.setCallback(buttonExpPedalToggle);
   footSW.setCallback(footSwitchFunction);
 
-  lastEXPValue = analogRead(expPedalPin); // Initialize first expression pedal value
+  analog.setupADC(); // Select the correct ADC resolution
+  // Initialize the filter to whatever the value on the input is right now
+  // (otherwise, the filter is initialized to zero and you get transients)
+  analog.resetToCurrentValue();
+  lastEXPValue = analog.getValue(); // Initialize first expression pedal value
 
 // Set MIDI baud rate:
   Serial.begin(31250);
 }
 
 void loop() {
-  // Updates values.
-  buttonFootSwitch.update();
-  buttonExpPedal.update();
-  footSW.update();
-  expPedalFunction();
+  static Timer<millis> timer = 1; // ms
+  // Updates values ever 1 ms. Timer is basically a "if millis>previous" wrapper.
+  if(timer && analog.update()){
+    buttonFootSwitch.update();
+    buttonExpPedal.update();
+    footSW.update();
+    expPedalFunction();
+  }
 }
 
 void footSwitchFunction(const int state) {
@@ -86,28 +96,19 @@ void footSwitchFunction(const int state) {
 }
 
 void expPedalFunction() {
-  int currentEXPValue = analogRead(expPedalPin);
-  deltaEXPChange = abs(currentEXPValue - lastEXPValue);
-  if (deltaEXPChange >= MIN_EXP_CHANGE) {
+  int analogValue = analog.getValue();
+  // Map value to the MIDI values
+  int currentEXPValue = map(analogValue, 0, 1023, 0, 127);
+  // Only send value if it has changed.
+  if (currentEXPValue != lastEXPValue) {
     lastEXPValue = currentEXPValue;
     //Serial.println(lastEXPValue);
-    //MAP AND SEND MIDI: 0 and 127 have a slightly expanded range
-    int sendValue;
-    if (lastEXPValue > 1010){ 
-      sendValue = 127;
-    }
-    else if(lastEXPValue < 10){
-      sendValue = 0;
-    }
-    else{
-      sendValue = map(lastEXPValue, 0, 1023, 0, 127);
-    }
     //Serial.println("Send:" + sendValue);
     if(Toggle_EXP){
-      sendMIDICC(ModWheelCC, sendValue); //SEND MODWHEEL
+      sendMIDICC(ModWheelCC, currentEXPValue); //SEND MODWHEEL
     }
     else{
-      sendMIDICC(VolumeCC, sendValue); //SEND VOLUME CC
+      sendMIDICC(VolumeCC, currentEXPValue); //SEND VOLUME CC
     }
       // DEBUG Serial.println("ExpPedal: " +  String(sendValue)); 
   }
